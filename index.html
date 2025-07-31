@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediaPipe Hand Tracking with GLB Models</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: white;
+            overflow: hidden;
+        }
+        
+        #container {
+            display: flex;
+            height: 100vh;
+            position: relative;
+        }
+        
+        #videoContainer {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 320px;
+            height: 240px;
+            border: 2px solid #00ff00;
+            border-radius: 10px;
+            overflow: hidden;
+            z-index: 10;
+        }
+        
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+        
+        #canvas3d {
+            width: 100%;
+            height: 100%;
+        }
+        
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 14px;
+            z-index: 10;
+            max-width: 350px;
+        }
+        
+        #status {
+            color: #00ff00;
+            margin-top: 10px;
+        }
+        
+        .landmark-info {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #888;
+        }
+        
+        .debug-info {
+            margin-top: 10px;
+            font-size: 11px;
+            color: #aaa;
+            font-family: monospace;
+        }
+        
+        .rotation-controls {
+            margin-top: 15px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 5px;
+        }
+        
+        .rotation-controls h4 {
+            margin: 0 0 10px 0;
+            color: #00ff00;
+            font-size: 12px;
+        }
+        
+        .rotation-control {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+            font-size: 11px;
+        }
+        
+        .rotation-control label {
+            width: 80px;
+            color: #ccc;
+        }
+        
+        .rotation-control input[type="range"] {
+            width: 150px;
+            margin: 0 10px;
+        }
+        
+        .rotation-control span {
+            width: 60px;
+            color: #00ff00;
+            font-family: monospace;
+        }
+        
+        .toggle-switch {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+        }
+        
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 24px;
+        }
+        
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .slider {
+            background-color: #00ff00;
+        }
+        
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+        
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 20px;
+            color: #00ff00;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="canvas3d"></canvas>
+        <div id="videoContainer">
+            <video id="video" playsinline></video>
+        </div>
+        <div id="info">
+            <h3>MediaPipe Hand Tracking</h3>
+            <div id="status">초기화 중...</div>
+            <div class="landmark-info">
+                손 감지: <span id="handDetected">-</span><br>
+                손 방향: <span id="handedness">-</span><br>
+                FPS: <span id="fps">0</span>
+            </div>
+            <div class="debug-info">
+                손목 위치: <span id="wristPos">-</span><br>
+                모델 상태: <span id="modelStatus">모델 로딩 중...</span>
+            </div>
+            <div class="toggle-switch">
+                <label>랜드마크 표시:</label>
+                <label class="switch">
+                    <input type="checkbox" id="showLandmarks" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="rotation-controls">
+                <h4>오른손 모델 조정</h4>
+                <div class="rotation-control">
+                    <label>X축 회전:</label>
+                    <input type="range" id="leftRotationX" min="-180" max="180" value="0" step="1">
+                    <span id="leftRotationXValue">0°</span>
+                </div>
+                <div class="rotation-control">
+                    <label>Y축 회전:</label>
+                    <input type="range" id="leftRotationY" min="-180" max="180" value="78" step="1">
+                    <span id="leftRotationYValue">78°</span>
+                </div>
+                <div class="rotation-control">
+                    <label>Z축 회전:</label>
+                    <input type="range" id="leftRotationZ" min="-180" max="180" value="0" step="1">
+                    <span id="leftRotationZValue">0°</span>
+                </div>
+                <div class="rotation-control">
+                    <label>스케일:</label>
+                    <input type="range" id="leftModelScale" min="1" max="20" value="8" step="0.5">
+                    <span id="leftModelScaleValue">8.0</span>
+                </div>
+            </div>
+            <div class="rotation-controls">
+                <h4>왼손 모델 조정</h4>
+                <div class="rotation-control">
+                    <label>X축 회전:</label>
+                    <input type="range" id="rightRotationX" min="-180" max="180" value="-180" step="1">
+                    <span id="rightRotationXValue">-180°</span>
+                </div>
+                <div class="rotation-control">
+                    <label>Y축 회전:</label>
+                    <input type="range" id="rightRotationY" min="-180" max="180" value="-78" step="1">
+                    <span id="rightRotationYValue">-78°</span>
+                </div>
+                <div class="rotation-control">
+                    <label>Z축 회전:</label>
+                    <input type="range" id="rightRotationZ" min="-180" max="180" value="0" step="1">
+                    <span id="rightRotationZValue">0°</span>
+                </div>
+                <div class="rotation-control">
+                    <label>스케일:</label>
+                    <input type="range" id="rightModelScale" min="1" max="20" value="8" step="0.5">
+                    <span id="rightModelScaleValue">8.0</span>
+                </div>
+            </div>
+        </div>
+        <div class="loading" id="loading">GLB 모델 로딩 중...</div>
+    </div>
+
+    <!-- MediaPipe CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
+
+    <script>
+        // Three.js 설정
+        let scene, camera, renderer;
+        let leftHandModel = null;
+        let rightHandModel = null;
+        let currentHandModel = null;
+        let leftHandJoints = {};
+        let rightHandJoints = {};
+        let leftHandConnections = [];
+        let rightHandConnections = [];
+        let showLandmarks = true;
+        let modelsLoaded = false;
+        
+        // 오른손 회전 조정값
+        let leftHandRotationX = 0;
+        let leftHandRotationY = 78;
+        let leftHandRotationZ = 0;
+        let leftHandScaleFactor = 8;
+        
+        // 왼손 회전 조정값
+        let rightHandRotationX = -180;
+        let rightHandRotationY = -78;
+        let rightHandRotationZ = 0;
+        let rightHandScaleFactor = 8;
+        
+        // GLB 파일 경로 설정
+        const MODEL_PATH = './Models/';
+        const LEFT_HAND_MODEL = MODEL_PATH + 'LeftHand.glb';
+        const RIGHT_HAND_MODEL = MODEL_PATH + 'RightHand.glb';
+        
+        // MediaPipe 랜드마크 인덱스
+        const LANDMARK_CONNECTIONS = [
+            [0, 1], [1, 2], [2, 3], [3, 4],         // 엄지
+            [0, 5], [5, 6], [6, 7], [7, 8],         // 검지
+            [0, 9], [9, 10], [10, 11], [11, 12],    // 중지
+            [0, 13], [13, 14], [14, 15], [15, 16],  // 약지
+            [0, 17], [17, 18], [18, 19], [19, 20],  // 새끼
+            [5, 9], [9, 13], [13, 17]               // 손바닥
+        ];
+        
+        // Three.js 초기화
+        function initThreeJS() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a);
+            
+            // 카메라 설정
+            camera = new THREE.PerspectiveCamera(
+                60,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                100
+            );
+            camera.position.set(0, 0, 0.5);
+            camera.lookAt(0, 0, 0);
+            
+            renderer = new THREE.WebGLRenderer({
+                canvas: document.getElementById('canvas3d'),
+                antialias: true,
+                alpha: true
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            
+            // 조명 설정
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            directionalLight.position.set(1, 1, 1);
+            scene.add(directionalLight);
+            
+            // 랜드마크 시각화 생성
+            createLandmarkVisualization();
+            
+            // GLB 모델 자동 로드
+            loadModels();
+            
+            animate();
+        }
+        
+        // 랜드마크 시각화 생성
+        function createLandmarkVisualization() {
+            // 왼손 랜드마크 구체 생성
+            const leftSphereGeometry = new THREE.SphereGeometry(0.008, 16, 16);
+            const leftSphereMaterial = new THREE.MeshBasicMaterial({ 
+                color: 0x00ff00,
+                emissive: 0x00ff00,
+                emissiveIntensity: 0.8
+            });
+            
+            for (let i = 0; i < 21; i++) {
+                const sphere = new THREE.Mesh(leftSphereGeometry, leftSphereMaterial);
+                sphere.name = `left_landmark_${i}`;
+                sphere.visible = false;
+                scene.add(sphere);
+                leftHandJoints[i] = sphere;
+            }
+            
+            // 오른손 랜드마크 구체 생성
+            const rightSphereGeometry = new THREE.SphereGeometry(0.008, 16, 16);
+            const rightSphereMaterial = new THREE.MeshBasicMaterial({ 
+                color: 0xff0000,
+                emissive: 0xff0000,
+                emissiveIntensity: 0.8
+            });
+            
+            for (let i = 0; i < 21; i++) {
+                const sphere = new THREE.Mesh(rightSphereGeometry, rightSphereMaterial);
+                sphere.name = `right_landmark_${i}`;
+                sphere.visible = false;
+                scene.add(sphere);
+                rightHandJoints[i] = sphere;
+            }
+            
+            // 왼손 연결선 생성
+            const leftLineMaterial = new THREE.LineBasicMaterial({ 
+                color: 0x00ff00,
+                linewidth: 3,
+                transparent: true,
+                opacity: 0.9
+            });
+            
+            LANDMARK_CONNECTIONS.forEach(([start, end]) => {
+                const geometry = new THREE.BufferGeometry();
+                const positions = new Float32Array(6);
+                geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                const line = new THREE.Line(geometry, leftLineMaterial);
+                line.name = `left_connection_${start}_${end}`;
+                line.visible = false;
+                scene.add(line);
+                leftHandConnections.push({ line, start, end });
+            });
+            
+            // 오른손 연결선 생성
+            const rightLineMaterial = new THREE.LineBasicMaterial({ 
+                color: 0xff0000,
+                linewidth: 3,
+                transparent: true,
+                opacity: 0.9
+            });
+            
+            LANDMARK_CONNECTIONS.forEach(([start, end]) => {
+                const geometry = new THREE.BufferGeometry();
+                const positions = new Float32Array(6);
+                geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                const line = new THREE.Line(geometry, rightLineMaterial);
+                line.name = `right_connection_${start}_${end}`;
+                line.visible = false;
+                scene.add(line);
+                rightHandConnections.push({ line, start, end });
+            });
+        }
+        
+        // GLB 모델 자동 로드
+        async function loadModels() {
+            const loader = new THREE.GLTFLoader();
+            
+            try {
+                // 왼손 모델 로드
+                const leftGltf = await new Promise((resolve, reject) => {
+                    loader.load(LEFT_HAND_MODEL, resolve, undefined, reject);
+                });
+                
+                leftHandModel = leftGltf.scene;
+                setupHandModel(leftHandModel, 'left');
+                
+                // 오른손 모델 로드
+                const rightGltf = await new Promise((resolve, reject) => {
+                    loader.load(RIGHT_HAND_MODEL, resolve, undefined, reject);
+                });
+                
+                rightHandModel = rightGltf.scene;
+                setupHandModel(rightHandModel, 'right');
+                
+                modelsLoaded = true;
+                document.getElementById('modelStatus').textContent = '양손 모델 로드 완료';
+                document.getElementById('loading').style.display = 'none';
+                console.log('GLB 모델 로드 완료');
+                
+            } catch (error) {
+                console.error('GLB 모델 로드 실패:', error);
+                document.getElementById('modelStatus').textContent = '모델 로드 실패: ' + error.message;
+                document.getElementById('loading').textContent = '모델 로드 실패';
+                modelsLoaded = false;
+            }
+        }
+        
+        // 손 모델 설정
+        function setupHandModel(model, handType) {
+            model.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                    child.material.side = THREE.DoubleSide;
+                }
+            });
+            
+            // 모델을 위한 컨테이너 생성
+            const container = new THREE.Group();
+            container.add(model);
+            container.visible = false;
+            scene.add(container);
+            
+            // 컨테이너로 교체
+            if (handType === 'left') {
+                leftHandModel = container;
+            } else {
+                rightHandModel = container;
+            }
+        }
+        
+        // MediaPipe 초기화
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+        
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        
+        hands.onResults(onHandsResults);
+        
+        // 웹캠 설정
+        const video = document.getElementById('video');
+        const camera_utils = new Camera(video, {
+            onFrame: async () => {
+                await hands.send({ image: video });
+            },
+            width: 640,
+            height: 480
+        });
+        
+        // FPS 계산
+        let lastTime = performance.now();
+        let frameCount = 0;
+        
+        // 손 추적 결과 처리
+        function onHandsResults(results) {
+            const currentTime = performance.now();
+            frameCount++;
+            
+            if (currentTime - lastTime >= 1000) {
+                document.getElementById('fps').textContent = frameCount;
+                frameCount = 0;
+                lastTime = currentTime;
+            }
+            
+            // 모든 모델 숨기기
+            if (leftHandModel) leftHandModel.visible = false;
+            if (rightHandModel) rightHandModel.visible = false;
+            
+            // 모든 랜드마크 숨기기
+            Object.values(leftHandJoints).forEach(joint => joint.visible = false);
+            Object.values(rightHandJoints).forEach(joint => joint.visible = false);
+            leftHandConnections.forEach(({ line }) => line.visible = false);
+            rightHandConnections.forEach(({ line }) => line.visible = false);
+            
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                document.getElementById('handDetected').textContent = `${results.multiHandLandmarks.length}개 감지됨`;
+                document.getElementById('status').textContent = '손 추적 중...';
+                
+                // 각 손에 대해 처리
+                results.multiHandLandmarks.forEach((landmarks, index) => {
+                    if (index < results.multiHandedness.length) {
+                        const handedness = results.multiHandedness[index];
+                        
+                        // 첫 번째 손의 방향 표시
+                        if (index === 0) {
+                            document.getElementById('handedness').textContent = 
+                                handedness.label === 'Left' ? '왼손' : '오른손';
+                        }
+                        
+                        // 손 위치 업데이트
+                        updateHandPosition(landmarks, handedness.label, index);
+                    }
+                });
+            } else {
+                document.getElementById('handDetected').textContent = '감지 안됨';
+                document.getElementById('handedness').textContent = '-';
+            }
+        }
+        
+        // 3D 손 위치 업데이트
+        function updateHandPosition(landmarks, handedness, handIndex) {
+            const positions = [];
+            
+            // 랜드마크 위치 계산
+            for (let i = 0; i < landmarks.length; i++) {
+                const landmark = landmarks[i];
+                
+                // MediaPipe 좌표를 Three.js 좌표로 변환
+                // 거울 효과를 제거하기 위해 x축을 반전
+                const x = -(landmark.x - 0.5) * 1.0;  // x축 반전
+                const y = -(landmark.y - 0.5) * 1.0;
+                const z = -landmark.z * 0.3;
+                
+                positions.push(new THREE.Vector3(x, y, z));
+                
+                // 랜드마크 시각화 업데이트 (각 손별로 분리)
+                if (showLandmarks) {
+                    const isLeftHand = (handedness === 'Left');
+                    const joints = isLeftHand ? leftHandJoints : rightHandJoints;
+                    
+                    if (joints[i]) {
+                        joints[i].position.set(x, y, z);
+                        joints[i].visible = true;
+                    }
+                }
+                
+                // 손목 위치 디버깅
+                if (i === 0 && handIndex === 0) {
+                    document.getElementById('wristPos').textContent = 
+                        `x: ${x.toFixed(3)}, y: ${y.toFixed(3)}, z: ${z.toFixed(3)}`;
+                }
+            }
+            
+            // 연결선 업데이트 (각 손별로 분리)
+            if (showLandmarks) {
+                updateConnections(positions, handedness);
+            }
+            
+            // GLB 모델 업데이트
+            if (modelsLoaded) {
+                // 거울 효과 제거: 실제 손과 같은 모델 사용
+                const model = handedness === 'Left' ? leftHandModel : rightHandModel;
+                if (model) {
+                    model.visible = true;
+                    updateGLBModel(model, positions, landmarks, handedness);
+                }
+            }
+        }
+        
+        // 연결선 업데이트
+        function updateConnections(positions, handedness) {
+            const isLeftHand = (handedness === 'Left');
+            const connections = isLeftHand ? leftHandConnections : rightHandConnections;
+            
+            connections.forEach(({ line, start, end }) => {
+                if (positions[start] && positions[end]) {
+                    const geometry = line.geometry;
+                    const positionAttribute = geometry.attributes.position;
+                    
+                    positionAttribute.array[0] = positions[start].x;
+                    positionAttribute.array[1] = positions[start].y;
+                    positionAttribute.array[2] = positions[start].z;
+                    positionAttribute.array[3] = positions[end].x;
+                    positionAttribute.array[4] = positions[end].y;
+                    positionAttribute.array[5] = positions[end].z;
+                    
+                    positionAttribute.needsUpdate = true;
+                    line.visible = true;
+                }
+            });
+        }
+        
+        // GLB 모델 업데이트
+        function updateGLBModel(modelContainer, positions, landmarks, handedness) {
+            if (!modelContainer || !modelContainer.children[0]) return;
+            
+            const model = modelContainer.children[0];
+            
+            // 손목 위치로 모델 이동
+            modelContainer.position.copy(positions[0]);
+            
+            // 손에 따른 회전값과 스케일 선택
+            const isLeftHand = (handedness === 'Left');
+            const rotationX = isLeftHand ? leftHandRotationX : rightHandRotationX;
+            const rotationY = isLeftHand ? leftHandRotationY : rightHandRotationY;
+            const rotationZ = isLeftHand ? leftHandRotationZ : rightHandRotationZ;
+            const scaleFactor = isLeftHand ? leftHandScaleFactor : rightHandScaleFactor;
+            
+            // 손 크기에 따른 스케일 조정 (좌우 반전 적용)
+            const handScale = positions[0].distanceTo(positions[9]) * scaleFactor;
+            model.scale.set(-handScale, -handScale, -handScale);
+            
+            // 손바닥 방향 계산
+            const wrist = positions[0];
+            const indexMCP = positions[5];
+            const middleMCP = positions[9];
+            const pinkyMCP = positions[17];
+            
+            // 손의 기본 축 계산
+            // X축: 검지에서 새끼손가락 방향
+            const handRight = new THREE.Vector3().subVectors(pinkyMCP, indexMCP).normalize();
+            
+            // Z축: 손목에서 중지 방향 (손바닥에서 나오는 방향)
+            const middleFingerDir = new THREE.Vector3().subVectors(middleMCP, wrist);
+            const indexDir = new THREE.Vector3().subVectors(indexMCP, wrist);
+            const handForward = new THREE.Vector3().addVectors(middleFingerDir, indexDir).normalize();
+            
+            // Y축: X와 Z의 외적 (손가락이 향하는 방향)
+            const handUp = new THREE.Vector3().crossVectors(handForward, handRight).normalize();
+            
+            // Z축 재계산 (정확한 직교 좌표계를 위해)
+            const handNormal = new THREE.Vector3().crossVectors(handRight, handUp).normalize();
+            
+            // 회전 행렬 생성
+            const rotationMatrix = new THREE.Matrix4();
+            rotationMatrix.set(
+                handRight.x, handUp.x, handNormal.x, 0,
+                handRight.y, handUp.y, handNormal.y, 0,
+                handRight.z, handUp.z, handNormal.z, 0,
+                0, 0, 0, 1
+            );
+            
+            // 모델에 회전 적용
+            modelContainer.quaternion.setFromRotationMatrix(rotationMatrix);
+            
+            // 사용자 정의 추가 회전 적용
+            const additionalRotation = new THREE.Euler(
+                THREE.Math.degToRad(rotationX),
+                THREE.Math.degToRad(rotationY),
+                THREE.Math.degToRad(rotationZ),
+                'XYZ'
+            );
+            const additionalQuaternion = new THREE.Quaternion().setFromEuler(additionalRotation);
+            modelContainer.quaternion.multiply(additionalQuaternion);
+            
+            // 손가락 관절 업데이트
+            updateFingerJoints(model, positions, landmarks);
+        }
+        
+        // 손가락 관절 업데이트
+        function updateFingerJoints(model, positions, landmarks) {
+            // 손가락별 랜드마크 인덱스
+            const fingerIndices = {
+                thumb: [1, 2, 3, 4],
+                index: [5, 6, 7, 8],
+                middle: [9, 10, 11, 12],
+                ring: [13, 14, 15, 16],
+                pinky: [17, 18, 19, 20]
+            };
+            
+            // 각 손가락에 대해
+            Object.entries(fingerIndices).forEach(([fingerName, indices]) => {
+                indices.forEach((landmarkIdx, jointIdx) => {
+                    // 본 찾기
+                    const boneName = `${fingerName}_${jointIdx}`;
+                    let bone = null;
+                    
+                    model.traverse((child) => {
+                        if (child.isBone && 
+                            (child.name.toLowerCase().includes(fingerName) || 
+                             child.name.toLowerCase().includes(boneName))) {
+                            // 이전 랜드마크와 현재 랜드마크 사이의 방향 계산
+                            const prevIdx = jointIdx === 0 ? 0 : indices[jointIdx - 1];
+                            const currPos = positions[landmarkIdx];
+                            const prevPos = positions[prevIdx];
+                            
+                            if (currPos && prevPos) {
+                                const direction = new THREE.Vector3()
+                                    .subVectors(currPos, prevPos)
+                                    .normalize();
+                                
+                                // 본의 로컬 방향으로 회전
+                                const up = new THREE.Vector3(0, 1, 0);
+                                const quaternion = new THREE.Quaternion();
+                                quaternion.setFromUnitVectors(up, direction);
+                                
+                                child.quaternion.copy(quaternion);
+                            }
+                        }
+                    });
+                });
+            });
+        }
+        
+        // 애니메이션 루프
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+        
+        // 이벤트 리스너
+        document.getElementById('showLandmarks').addEventListener('change', (e) => {
+            showLandmarks = e.target.checked;
+        });
+        
+        // 왼손 회전 컨트롤
+        document.getElementById('leftRotationX').addEventListener('input', (e) => {
+            leftHandRotationX = parseFloat(e.target.value);
+            document.getElementById('leftRotationXValue').textContent = leftHandRotationX + '°';
+        });
+        
+        document.getElementById('leftRotationY').addEventListener('input', (e) => {
+            leftHandRotationY = parseFloat(e.target.value);
+            document.getElementById('leftRotationYValue').textContent = leftHandRotationY + '°';
+        });
+        
+        document.getElementById('leftRotationZ').addEventListener('input', (e) => {
+            leftHandRotationZ = parseFloat(e.target.value);
+            document.getElementById('leftRotationZValue').textContent = leftHandRotationZ + '°';
+        });
+        
+        document.getElementById('leftModelScale').addEventListener('input', (e) => {
+            leftHandScaleFactor = parseFloat(e.target.value);
+            document.getElementById('leftModelScaleValue').textContent = leftHandScaleFactor.toFixed(1);
+        });
+        
+        // 오른손 회전 컨트롤
+        document.getElementById('rightRotationX').addEventListener('input', (e) => {
+            rightHandRotationX = parseFloat(e.target.value);
+            document.getElementById('rightRotationXValue').textContent = rightHandRotationX + '°';
+        });
+        
+        document.getElementById('rightRotationY').addEventListener('input', (e) => {
+            rightHandRotationY = parseFloat(e.target.value);
+            document.getElementById('rightRotationYValue').textContent = rightHandRotationY + '°';
+        });
+        
+        document.getElementById('rightRotationZ').addEventListener('input', (e) => {
+            rightHandRotationZ = parseFloat(e.target.value);
+            document.getElementById('rightRotationZValue').textContent = rightHandRotationZ + '°';
+        });
+        
+        document.getElementById('rightModelScale').addEventListener('input', (e) => {
+            rightHandScaleFactor = parseFloat(e.target.value);
+            document.getElementById('rightModelScaleValue').textContent = rightHandScaleFactor.toFixed(1);
+        });
+        
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // 초기화
+        initThreeJS();
+        camera_utils.start();
+        document.getElementById('status').textContent = '카메라 준비 완료';
+    </script>
+</body>
+</html>
