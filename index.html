@@ -197,6 +197,10 @@
                     <span class="slider"></span>
                 </label>
             </div>
+            <div style="margin-top: 15px; display: flex; gap: 10px;">
+                <button id="saveSettings" style="padding: 8px 16px; background: #00ff00; color: #000; border: none; border-radius: 5px; cursor: pointer; font-size: 12px;">설정 저장</button>
+                <button id="resetSettings" style="padding: 8px 16px; background: #ff6666; color: #fff; border: none; border-radius: 5px; cursor: pointer; font-size: 12px;">기본값 복원</button>
+            </div>
             <div class="rotation-controls">
                 <h4>오른손 모델 조정</h4>
                 <div class="rotation-control">
@@ -270,20 +274,93 @@
         
         // 오른손 회전 조정값
         let leftHandRotationX = 0;
-        let leftHandRotationY = 78;
+        let leftHandRotationY = 73;
         let leftHandRotationZ = 0;
-        let leftHandScaleFactor = 8;
+        let leftHandScaleFactor = 11;
         
         // 왼손 회전 조정값
         let rightHandRotationX = -180;
-        let rightHandRotationY = -78;
+        let rightHandRotationY = -73;
         let rightHandRotationZ = 0;
-        let rightHandScaleFactor = 8;
+        let rightHandScaleFactor = 11;
         
         // GLB 파일 경로 설정
         const MODEL_PATH = './Models/';
         const LEFT_HAND_MODEL = MODEL_PATH + 'LeftHand.glb';
         const RIGHT_HAND_MODEL = MODEL_PATH + 'RightHand.glb';
+        
+        // 설정값 저장/불러오기 함수들
+        function saveSettings() {
+            const settings = {
+                leftHandRotationX,
+                leftHandRotationY,
+                leftHandRotationZ,
+                leftHandScaleFactor,
+                rightHandRotationX,
+                rightHandRotationY,
+                rightHandRotationZ,
+                rightHandScaleFactor,
+                showLandmarks
+            };
+            localStorage.setItem('handTrackingSettings', JSON.stringify(settings));
+            console.log('설정값이 저장되었습니다.');
+        }
+        
+        function loadSettings() {
+            const savedSettings = localStorage.getItem('handTrackingSettings');
+            if (savedSettings) {
+                try {
+                    const settings = JSON.parse(savedSettings);
+                    
+                    // 왼손(오른손 모델) 설정 적용
+                    leftHandRotationX = settings.leftHandRotationX || 0;
+                    leftHandRotationY = settings.leftHandRotationY || 73;
+                    leftHandRotationZ = settings.leftHandRotationZ || 0;
+                    leftHandScaleFactor = settings.leftHandScaleFactor || 11;
+                    
+                    // 오른손(왼손 모델) 설정 적용
+                    rightHandRotationX = settings.rightHandRotationX || -180;
+                    rightHandRotationY = settings.rightHandRotationY || -73;
+                    rightHandRotationZ = settings.rightHandRotationZ || 0;
+                    rightHandScaleFactor = settings.rightHandScaleFactor || 11;
+                    
+                    // 랜드마크 표시 설정
+                    showLandmarks = settings.showLandmarks !== undefined ? settings.showLandmarks : true;
+                    
+                    // UI 업데이트
+                    updateSliderValues();
+                    
+                    console.log('설정값이 불러와졌습니다.');
+                } catch (error) {
+                    console.error('설정값 불러오기 실패:', error);
+                }
+            }
+        }
+        
+        function updateSliderValues() {
+            // 왼손(오른손 모델) 슬라이더 값 업데이트
+            document.getElementById('leftRotationX').value = leftHandRotationX;
+            document.getElementById('leftRotationXValue').textContent = leftHandRotationX + '°';
+            document.getElementById('leftRotationY').value = leftHandRotationY;
+            document.getElementById('leftRotationYValue').textContent = leftHandRotationY + '°';
+            document.getElementById('leftRotationZ').value = leftHandRotationZ;
+            document.getElementById('leftRotationZValue').textContent = leftHandRotationZ + '°';
+            document.getElementById('leftModelScale').value = leftHandScaleFactor;
+            document.getElementById('leftModelScaleValue').textContent = leftHandScaleFactor.toFixed(1);
+            
+            // 오른손(왼손 모델) 슬라이더 값 업데이트
+            document.getElementById('rightRotationX').value = rightHandRotationX;
+            document.getElementById('rightRotationXValue').textContent = rightHandRotationX + '°';
+            document.getElementById('rightRotationY').value = rightHandRotationY;
+            document.getElementById('rightRotationYValue').textContent = rightHandRotationY + '°';
+            document.getElementById('rightRotationZ').value = rightHandRotationZ;
+            document.getElementById('rightRotationZValue').textContent = rightHandRotationZ + '°';
+            document.getElementById('rightModelScale').value = rightHandScaleFactor;
+            document.getElementById('rightModelScaleValue').textContent = rightHandScaleFactor.toFixed(1);
+            
+            // 랜드마크 체크박스 업데이트
+            document.getElementById('showLandmarks').checked = showLandmarks;
+        }
         
         // MediaPipe 랜드마크 인덱스
         const LANDMARK_CONNECTIONS = [
@@ -736,48 +813,82 @@
         // 이벤트 리스너
         document.getElementById('showLandmarks').addEventListener('change', (e) => {
             showLandmarks = e.target.checked;
+            saveSettings(); // 자동 저장
+        });
+        
+        // 저장/리셋 버튼 이벤트
+        document.getElementById('saveSettings').addEventListener('click', () => {
+            saveSettings();
+            alert('설정이 저장되었습니다!');
+        });
+        
+        document.getElementById('resetSettings').addEventListener('click', () => {
+            if (confirm('모든 설정을 기본값으로 되돌리시겠습니까?')) {
+                // 기본값으로 리셋
+                leftHandRotationX = 0;
+                leftHandRotationY = 73;
+                leftHandRotationZ = 0;
+                leftHandScaleFactor = 11;
+                rightHandRotationX = -180;
+                rightHandRotationY = -73;
+                rightHandRotationZ = 0;
+                rightHandScaleFactor = 11;
+                showLandmarks = true;
+                
+                updateSliderValues();
+                saveSettings();
+                alert('설정이 기본값으로 복원되었습니다!');
+            }
         });
         
         // 왼손 회전 컨트롤
         document.getElementById('leftRotationX').addEventListener('input', (e) => {
             leftHandRotationX = parseFloat(e.target.value);
             document.getElementById('leftRotationXValue').textContent = leftHandRotationX + '°';
+            saveSettings(); // 자동 저장
         });
         
         document.getElementById('leftRotationY').addEventListener('input', (e) => {
             leftHandRotationY = parseFloat(e.target.value);
             document.getElementById('leftRotationYValue').textContent = leftHandRotationY + '°';
+            saveSettings(); // 자동 저장
         });
         
         document.getElementById('leftRotationZ').addEventListener('input', (e) => {
             leftHandRotationZ = parseFloat(e.target.value);
             document.getElementById('leftRotationZValue').textContent = leftHandRotationZ + '°';
+            saveSettings(); // 자동 저장
         });
         
         document.getElementById('leftModelScale').addEventListener('input', (e) => {
             leftHandScaleFactor = parseFloat(e.target.value);
             document.getElementById('leftModelScaleValue').textContent = leftHandScaleFactor.toFixed(1);
+            saveSettings(); // 자동 저장
         });
         
         // 오른손 회전 컨트롤
         document.getElementById('rightRotationX').addEventListener('input', (e) => {
             rightHandRotationX = parseFloat(e.target.value);
             document.getElementById('rightRotationXValue').textContent = rightHandRotationX + '°';
+            saveSettings(); // 자동 저장
         });
         
         document.getElementById('rightRotationY').addEventListener('input', (e) => {
             rightHandRotationY = parseFloat(e.target.value);
             document.getElementById('rightRotationYValue').textContent = rightHandRotationY + '°';
+            saveSettings(); // 자동 저장
         });
         
         document.getElementById('rightRotationZ').addEventListener('input', (e) => {
             rightHandRotationZ = parseFloat(e.target.value);
             document.getElementById('rightRotationZValue').textContent = rightHandRotationZ + '°';
+            saveSettings(); // 자동 저장
         });
         
         document.getElementById('rightModelScale').addEventListener('input', (e) => {
             rightHandScaleFactor = parseFloat(e.target.value);
             document.getElementById('rightModelScaleValue').textContent = rightHandScaleFactor.toFixed(1);
+            saveSettings(); // 자동 저장
         });
         
         window.addEventListener('resize', () => {
@@ -787,6 +898,7 @@
         });
         
         // 초기화
+        loadSettings(); // 저장된 설정 불러오기
         initThreeJS();
         camera_utils.start();
         document.getElementById('status').textContent = '카메라 준비 완료';
