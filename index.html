@@ -189,8 +189,7 @@
             <div class="debug-info">
                 손목 위치: <span id="wristPos">-</span><br>
                 모델 상태: <span id="modelStatus">모델 로딩 중...</span><br>
-                Bone 매핑: <span id="boneMapping">-</span><br>
-                매핑 품질: <span id="mappingQuality">-</span>
+                Bone 매핑: <span id="boneMapping">-</span>
             </div>
             <div class="toggle-switch">
                 <label>랜드마크 표시:</label>
@@ -780,7 +779,7 @@
                 }
             });
             
-            console.log(`\n📊 SUMMARY for ${handType} hand:`);
+            console.log(`\nSUMMARY for ${handType} hand:`);
             console.log(`Total bones: ${bones.length}`);
             console.log(`Mapped bones: ${mappedBones.length}`);
             console.log(`Unmapped bones: ${unmappedBones.length}`);
@@ -791,17 +790,9 @@
                 `${mappedBones.length}/${bones.length} (${mappingPercentage}%)`;
             
             if (unmappedBones.length > 0) {
-                console.log('\n🔍 UNMAPPED BONES:', unmappedBones);
-                console.log('💡 Consider adding these to BONE_TO_LANDMARK_MAPPING for complete coverage');
-            } else {
-                console.log('\n🎉 All bones successfully mapped!');
+                console.log('\nUnmapped bones list:', unmappedBones);
+                console.log('Consider adding these to BONE_TO_LANDMARK_MAPPING');
             }
-            
-            // 매핑된 bone들의 상세 정보
-            console.log('\n📋 MAPPED BONES DETAILS:');
-            mappedBones.forEach(item => {
-                console.log(`  "${item.bone}" -> ${item.landmark} (${item.landmarkName})`);
-            });
             
             console.log('=======================================\n');
             
@@ -895,17 +886,18 @@
             }
         }
         
-        // 3D 손 위치 업데이트
+        // 3D 손 위치 업데이트 (양손 모두 올바른 좌표계)
         function updateHandPosition(landmarks, handedness, handIndex) {
             const positions = [];
+            const isLeftHand = (handedness === 'Left');
             
-            // 랜드마크 위치 계산
+            // 랜드마크 위치 계산 (양손 모두 동일한 기본 변환 적용)
             for (let i = 0; i < landmarks.length; i++) {
                 const landmark = landmarks[i];
                 
                 // MediaPipe 좌표를 Three.js 좌표로 변환
-                // 거울 효과를 제거하기 위해 x축을 반전
-                const x = -(landmark.x - 0.5) * 1.0;  // x축 반전
+                // 기본 변환 (거울 효과 제거)
+                const x = -(landmark.x - 0.5) * 1.0;  // X축 반전
                 const y = -(landmark.y - 0.5) * 1.0;
                 const z = -landmark.z * 0.3;
                 
@@ -913,7 +905,6 @@
                 
                 // 랜드마크 시각화 업데이트 (각 손별로 분리)
                 if (showLandmarks) {
-                    const isLeftHand = (handedness === 'Left');
                     const joints = isLeftHand ? leftHandJoints : rightHandJoints;
                     
                     if (joints[i]) {
@@ -937,6 +928,7 @@
             // GLB 모델 업데이트
             if (modelsLoaded) {
                 // 올바른 모델 매핑: 왼손은 왼손 모델, 오른손은 오른손 모델
+                // 하지만 좌표계 차이로 인해 실제로는 반대 매핑 필요
                 const model = handedness === 'Left' ? rightHandModel : leftHandModel;
                 if (model) {
                     model.visible = true;
@@ -968,17 +960,17 @@
             });
         }
         
-        // GLB 모델 업데이트 (정밀한 랜드마크 매핑)
+        // GLB 모델 업데이트 (양손 모두 올바른 회전 적용)
         function updateGLBModel(modelContainer, positions, landmarks, handedness) {
             if (!modelContainer || !modelContainer.children[0]) return;
             
             const model = modelContainer.children[0];
+            const isLeftHand = (handedness === 'Left');
             
             // 손목 위치로 모델 이동
             modelContainer.position.copy(positions[0]);
             
-            // 손에 따른 회전값과 스케일 선택
-            const isLeftHand = (handedness === 'Left');
+            // 손에 따른 회전값과 스케일 선택 (올바른 매핑)
             const rotationX = isLeftHand ? rightHandRotationX : leftHandRotationX;
             const rotationY = isLeftHand ? rightHandRotationY : leftHandRotationY;
             const rotationZ = isLeftHand ? rightHandRotationZ : leftHandRotationZ;
@@ -988,61 +980,47 @@
             const handScale = positions[0].distanceTo(positions[9]) * scaleFactor;
             model.scale.set(handScale, handScale, handScale);
             
-            // 정밀한 손바닥 좌표계 구성
+            // 손바닥 방향 계산 (랜드마크 좌표를 직접 사용)
             const wrist = positions[0];
             const indexMCP = positions[5];
             const middleMCP = positions[9];
             const pinkyMCP = positions[17];
             
-            // 더 정확한 손바닥 방향 계산
-            // 1. 손가락들의 기저부를 연결하는 벡터들
-            const indexToMiddle = new THREE.Vector3().subVectors(middleMCP, indexMCP).normalize();
-            const middleToPinky = new THREE.Vector3().subVectors(pinkyMCP, middleMCP).normalize();
-            const indexToPinky = new THREE.Vector3().subVectors(pinkyMCP, indexMCP).normalize();
+            // 랜드마크 기반 좌표계 구성 (손등이 보이도록 수정)
+            const v1 = new THREE.Vector3().subVectors(indexMCP, wrist);
+            const v2 = new THREE.Vector3().subVectors(pinkyMCP, wrist);
+            let palmNormal = new THREE.Vector3().crossVectors(v2, v1).normalize(); // 벡터 순서 반전하여 법선 방향 뒤집기
             
-            // 2. 손목에서 손가락 기저부 중심으로의 방향
-            const fingerCenter = new THREE.Vector3()
-                .addVectors(indexMCP, middleMCP)
-                .add(pinkyMCP)
-                .divideScalar(3);
-            const wristToFingers = new THREE.Vector3().subVectors(fingerCenter, wrist).normalize();
+            const fingerDirection = new THREE.Vector3().subVectors(middleMCP, wrist).normalize();
+            let sideDirection = new THREE.Vector3().crossVectors(fingerDirection, palmNormal).normalize();
+            let forwardDirection = new THREE.Vector3().crossVectors(sideDirection, fingerDirection).normalize();
             
-            // 3. 손바닥 평면의 법선 벡터 (더 정확한 계산)
-            const palmNormal = new THREE.Vector3().crossVectors(indexToPinky, wristToFingers).normalize();
+            // 손등이 보이도록 추가 보정
+            palmNormal.negate(); // 손바닥 법선을 반전시켜 손등 방향으로
+            forwardDirection = palmNormal; // 앞방향을 손등 방향으로 설정
             
-            // 4. 손바닥의 좌우 방향 (엄지쪽이 양의 방향)
-            const thumbDirection = new THREE.Vector3().subVectors(positions[2], wrist).normalize();
-            const sideDirection = new THREE.Vector3().crossVectors(wristToFingers, palmNormal).normalize();
-            
-            // 엄지 방향과 일치하도록 조정
-            if (thumbDirection.dot(sideDirection) < 0) {
+            // 모델 매핑에 따른 좌표계 보정
+            // 왼손 랜드마크 → 오른손 모델, 오른손 랜드마크 → 왼손 모델이므로
+            // 좌표계를 해당 모델에 맞게 조정
+            if (isLeftHand) {
+                // 왼손 랜드마크를 오른손 모델에 적용: 추가 Y축 조정
                 sideDirection.negate();
-                palmNormal.negate();
+            } else {
+                // 오른손 랜드마크를 왼손 모델에 적용: 추가 Y축 조정
+                sideDirection.negate();
             }
             
-            // 5. 정확한 회전 행렬 구성
+            // 회전 행렬 생성
             const rotationMatrix = new THREE.Matrix4();
             rotationMatrix.set(
-                sideDirection.x, wristToFingers.x, palmNormal.x, 0,
-                sideDirection.y, wristToFingers.y, palmNormal.y, 0,
-                sideDirection.z, wristToFingers.z, palmNormal.z, 0,
+                sideDirection.x, fingerDirection.x, forwardDirection.x, 0,
+                sideDirection.y, fingerDirection.y, forwardDirection.y, 0,
+                sideDirection.z, fingerDirection.z, forwardDirection.z, 0,
                 0, 0, 0, 1
             );
             
-            // 회전 행렬을 quaternion으로 변환하고 적용
-            const baseQuaternion = new THREE.Quaternion().setFromRotationMatrix(rotationMatrix);
-            
-            // MediaPipe와 모델의 좌표계 차이 보정
-            const correctionRotation = new THREE.Euler(
-                Math.PI, // X축 180도 회전
-                0,       // Y축
-                0,       // Z축
-                'XYZ'
-            );
-            const correctionQuaternion = new THREE.Quaternion().setFromEuler(correctionRotation);
-            baseQuaternion.multiply(correctionQuaternion);
-            
-            modelContainer.quaternion.copy(baseQuaternion);
+            const inverseMatrix = new THREE.Matrix4().copy(rotationMatrix).invert();
+            modelContainer.quaternion.setFromRotationMatrix(inverseMatrix);
             
             // 사용자 정의 추가 회전 적용
             const additionalRotation = new THREE.Euler(
@@ -1054,142 +1032,79 @@
             const additionalQuaternion = new THREE.Quaternion().setFromEuler(additionalRotation);
             modelContainer.quaternion.multiply(additionalQuaternion);
             
-            // 정밀한 bone-to-landmark 매핑 적용
+            // 완전한 bone-to-landmark 매핑 적용
             applyBoneToLandmarkMapping(model, positions, handedness);
-            
-            // 매핑 품질 계산 및 표시
-            updateMappingQuality(model, positions);
         }
         
-        // 매핑 품질 평가 함수
-        function updateMappingQuality(model, positions) {
-            let totalMappedBones = 0;
-            let accurateMappings = 0;
-            
-            model.traverse((bone) => {
-                if (bone.isBone) {
-                    const landmarkIndex = getBoneToLandmarkMapping(bone.name);
-                    if (landmarkIndex >= 0 && landmarkIndex < positions.length) {
-                        totalMappedBones++;
-                        
-                        // 간단한 정확도 체크 (bone이 적절한 랜드마크 근처에 있는지)
-                        const targetPosition = positions[landmarkIndex];
-                        const boneWorldPosition = new THREE.Vector3();
-                        bone.getWorldPosition(boneWorldPosition);
-                        
-                        // 월드 좌표계에서의 거리 체크
-                        const distance = boneWorldPosition.distanceTo(targetPosition);
-                        if (distance < 0.1) { // 임계값 내에 있으면 정확한 매핑으로 간주
-                            accurateMappings++;
-                        }
-                    }
-                }
-            });
-            
-            const qualityPercentage = totalMappedBones > 0 ? (accurateMappings / totalMappedBones * 100).toFixed(1) : 0;
-            document.getElementById('mappingQuality').textContent = `${qualityPercentage}% (${accurateMappings}/${totalMappedBones})`;
-        }
-        
-        // 완전한 bone-to-landmark 매핑 함수 (향상된 위치/회전 매핑)
+        // 완전한 bone-to-landmark 매핑 함수
         function applyBoneToLandmarkMapping(model, positions, handedness) {
             if (!model || !positions || positions.length < 21) {
                 return;
             }
             
-            // 각 bone을 순회하며 해당하는 랜드마크에 정확히 매핑
+            // 각 bone을 순회하며 해당하는 랜드마크에 맞춰 위치와 회전 조정
             model.traverse((bone) => {
                 if (bone.isBone) {
                     const landmarkIndex = getBoneToLandmarkMapping(bone.name);
                     
                     if (landmarkIndex >= 0 && landmarkIndex < positions.length) {
+                        // 매핑된 랜드마크가 있는 경우
+                        const targetPosition = positions[landmarkIndex];
                         const boneName = bone.name.toLowerCase();
                         
-                        // bone 타입에 따른 정확한 위치/회전 매핑
-                        if (boneName.includes('wrist') || boneName.includes('hand') || boneName.includes('palm') || boneName.includes('root')) {
-                            // 손목/손바닥 - 기준점이므로 특별 처리
+                        // bone 타입에 따른 처리
+                        if (boneName.includes('thumb')) {
+                            applyThumbBoneMapping(bone, positions, landmarkIndex, handedness);
+                        } else if (boneName.includes('index')) {
+                            applyFingerBoneMapping(bone, positions, landmarkIndex, 'index');
+                        } else if (boneName.includes('middle')) {
+                            applyFingerBoneMapping(bone, positions, landmarkIndex, 'middle');
+                        } else if (boneName.includes('ring')) {
+                            applyFingerBoneMapping(bone, positions, landmarkIndex, 'ring');
+                        } else if (boneName.includes('pinky') || boneName.includes('little')) {
+                            applyFingerBoneMapping(bone, positions, landmarkIndex, 'pinky');
+                        } else if (boneName.includes('wrist') || boneName.includes('hand') || boneName.includes('palm')) {
+                            // 손목/손바닥 bone 처리
                             applyWristBoneMapping(bone, positions, landmarkIndex);
-                        } else {
-                            // 모든 손가락 관절에 대해 정확한 위치와 회전 적용
-                            applyPreciseBoneMapping(bone, positions, landmarkIndex, handedness);
                         }
+                        
+                        console.log(`Mapped bone "${bone.name}" to landmark ${landmarkIndex} (${MEDIAPIPE_LANDMARK_NAMES[landmarkIndex]})`);
                     }
                 }
             });
         }
         
-        // 정밀한 bone 위치/회전 매핑
-        function applyPreciseBoneMapping(bone, positions, landmarkIndex, handedness) {
-            const targetPosition = positions[landmarkIndex];
-            const boneName = bone.name.toLowerCase();
+        // 엄지손가락 bone 매핑
+        function applyThumbBoneMapping(bone, positions, landmarkIndex, handedness) {
+            const isLeftHand = (handedness === 'Left');
+            const baseXRotation = isLeftHand ? (rightThumbRotationX * Math.PI / 180) : (leftThumbRotationX * Math.PI / 180);
+            const baseYRotation = isLeftHand ? (rightThumbRotationY * Math.PI / 180) : (leftThumbRotationY * Math.PI / 180);
+            const baseZRotation = isLeftHand ? (rightThumbRotationZ * Math.PI / 180) : (leftThumbRotationZ * Math.PI / 180);
             
-            // 원래 상태 저장
-            if (!bone.userData.originalPosition) {
-                bone.userData.originalPosition = bone.position.clone();
+            // 엄지 굽힘 정도 계산
+            const bendAmount = calculateThumbBend(positions, handedness);
+            const maxBendAngle = Math.PI / 3;
+            const bendRotation = bendAmount * maxBendAngle;
+            
+            // 원래 회전값 저장
+            if (!bone.userData.originalRotation) {
                 bone.userData.originalRotation = bone.rotation.clone();
             }
             
-            // 손가락 관절별 정확한 매핑
-            if (boneName.includes('thumb')) {
-                applyThumbPreciseMapping(bone, positions, landmarkIndex, handedness);
-            } else if (boneName.includes('index')) {
-                applyFingerPreciseMapping(bone, positions, landmarkIndex, 'index');
-            } else if (boneName.includes('middle')) {
-                applyFingerPreciseMapping(bone, positions, landmarkIndex, 'middle');
-            } else if (boneName.includes('ring')) {
-                applyFingerPreciseMapping(bone, positions, landmarkIndex, 'ring');
-            } else if (boneName.includes('pinky') || boneName.includes('little')) {
-                applyFingerPreciseMapping(bone, positions, landmarkIndex, 'pinky');
-            }
+            // 기본 회전에서 시작
+            bone.rotation.copy(bone.userData.originalRotation);
+            
+            // 사용자 설정값과 굽힘 동작 적용
+            bone.rotation.x = baseXRotation + (bendRotation * 0.8);
+            bone.rotation.y = baseYRotation + (bendRotation * 0.6);
+            bone.rotation.z = baseZRotation + (bendRotation * 1.2);
         }
         
-        // 엄지손가락 정밀 매핑
-        function applyThumbPreciseMapping(bone, positions, landmarkIndex, handedness) {
-            const isLeftHand = (handedness === 'Left');
-            
-            // 엄지 관절 순서: CMC(1) -> MCP(2) -> IP(3) -> TIP(4)
-            const thumbLandmarks = [1, 2, 3, 4];
-            const currentIndex = thumbLandmarks.indexOf(landmarkIndex);
-            
-            if (currentIndex >= 0) {
-                // 현재 관절과 다음 관절 간의 방향 벡터 계산
-                let targetDirection;
-                if (currentIndex < thumbLandmarks.length - 1) {
-                    // 다음 관절로의 방향
-                    const nextLandmark = thumbLandmarks[currentIndex + 1];
-                    targetDirection = new THREE.Vector3()
-                        .subVectors(positions[nextLandmark], positions[landmarkIndex])
-                        .normalize();
-                } else {
-                    // 마지막 관절인 경우 이전 관절에서의 방향 연장
-                    const prevLandmark = thumbLandmarks[currentIndex - 1];
-                    targetDirection = new THREE.Vector3()
-                        .subVectors(positions[landmarkIndex], positions[prevLandmark])
-                        .normalize();
-                }
-                
-                // bone의 원래 forward 방향 (일반적으로 Y축)
-                const originalForward = new THREE.Vector3(0, 1, 0);
-                
-                // 회전 계산
-                const quaternion = new THREE.Quaternion().setFromUnitVectors(originalForward, targetDirection);
-                bone.setRotationFromQuaternion(quaternion);
-                
-                // 사용자 정의 엄지 회전 추가
-                const baseXRotation = isLeftHand ? (rightThumbRotationX * Math.PI / 180) : (leftThumbRotationX * Math.PI / 180);
-                const baseYRotation = isLeftHand ? (rightThumbRotationY * Math.PI / 180) : (leftThumbRotationY * Math.PI / 180);
-                const baseZRotation = isLeftHand ? (rightThumbRotationZ * Math.PI / 180) : (leftThumbRotationZ * Math.PI / 180);
-                
-                bone.rotation.x += baseXRotation;
-                bone.rotation.y += baseYRotation;
-                bone.rotation.z += baseZRotation;
-            }
-        }
-        
-        // 일반 손가락 정밀 매핑
-        function applyFingerPreciseMapping(bone, positions, landmarkIndex, fingerType) {
-            // 손가락별 랜드마크 순서
+        // 일반 손가락 bone 매핑
+        function applyFingerBoneMapping(bone, positions, landmarkIndex, fingerType) {
+            // 손가락별 랜드마크 범위 정의
             const fingerRanges = {
-                'index': [5, 6, 7, 8],    // MCP -> PIP -> DIP -> TIP
+                'index': [5, 6, 7, 8],
                 'middle': [9, 10, 11, 12],
                 'ring': [13, 14, 15, 16],
                 'pinky': [17, 18, 19, 20]
@@ -1198,67 +1113,45 @@
             const fingerLandmarks = fingerRanges[fingerType];
             if (!fingerLandmarks) return;
             
-            const currentIndex = fingerLandmarks.indexOf(landmarkIndex);
-            if (currentIndex >= 0) {
-                // 현재 관절과 다음 관절 간의 방향 벡터 계산
-                let targetDirection;
-                if (currentIndex < fingerLandmarks.length - 1) {
-                    // 다음 관절로의 방향
-                    const nextLandmark = fingerLandmarks[currentIndex + 1];
-                    targetDirection = new THREE.Vector3()
-                        .subVectors(positions[nextLandmark], positions[landmarkIndex])
-                        .normalize();
-                } else {
-                    // 마지막 관절인 경우 이전 관절에서의 방향 연장
-                    const prevLandmark = fingerLandmarks[currentIndex - 1];
-                    targetDirection = new THREE.Vector3()
-                        .subVectors(positions[landmarkIndex], positions[prevLandmark])
-                        .normalize();
-                }
-                
-                // bone의 원래 forward 방향
-                const originalForward = new THREE.Vector3(0, 1, 0);
-                
-                // 회전 계산 및 적용
-                const quaternion = new THREE.Quaternion().setFromUnitVectors(originalForward, targetDirection);
-                bone.setRotationFromQuaternion(quaternion);
-                
-                // 손가락 굽힘에 따른 추가 회전
-                const bendAmount = calculateFingerBend(positions, fingerLandmarks);
-                const maxBendAngle = Math.PI / 6; // 30도로 제한하여 자연스러운 움직임
-                const bendRotation = bendAmount * maxBendAngle;
-                
-                // 굽힘을 bone의 로컬 X축에 적용 (관절의 자연스러운 굽힘 방향)
-                bone.rotation.x += bendRotation;
-            }
-        }
-        
-        // 손목/손바닥 정밀 매핑
-        function applyWristBoneMapping(bone, positions, landmarkIndex) {
-            // 손목 bone은 전체 손의 기준점이므로 특별한 회전 없이 기본 상태 유지
-            // 대신 손바닥 평면의 방향성을 반영
+            // 손가락 굽힘 계산
+            const bendAmount = calculateFingerBend(positions, fingerLandmarks);
+            
+            // 원래 회전값 저장
             if (!bone.userData.originalRotation) {
                 bone.userData.originalRotation = bone.rotation.clone();
             }
             
-            // 손바닥 방향을 기반으로 한 기본 회전만 적용
-            const wrist = positions[0];
-            const indexMCP = positions[5];
-            const middleMCP = positions[9];
-            const pinkyMCP = positions[17];
-            
-            // 손바닥 평면 계산
-            const palmVector1 = new THREE.Vector3().subVectors(indexMCP, wrist);
-            const palmVector2 = new THREE.Vector3().subVectors(pinkyMCP, wrist);
-            const palmNormal = new THREE.Vector3().crossVectors(palmVector1, palmVector2).normalize();
-            
-            // 미세한 손목 회전만 적용 (너무 크지 않게)
-            const originalUp = new THREE.Vector3(0, 0, 1);
-            const quaternion = new THREE.Quaternion().setFromUnitVectors(originalUp, palmNormal);
-            quaternion.slerp(new THREE.Quaternion(), 0.7); // 70% 만 적용하여 부드럽게
-            
+            // 기본 회전에서 시작
             bone.rotation.copy(bone.userData.originalRotation);
-            bone.applyQuaternion(quaternion);
+            
+            // 손가락별 최대 굽힘 각도
+            let maxBendAngle = Math.PI / 3;
+            switch (fingerType) {
+                case 'index':
+                case 'middle':
+                    maxBendAngle = Math.PI / 2.5;
+                    break;
+                case 'ring':
+                case 'pinky':
+                    maxBendAngle = Math.PI / 3;
+                    break;
+            }
+            
+            // 굽힘 회전 적용
+            const bendRotation = bendAmount * maxBendAngle;
+            bone.rotation.x += bendRotation;
+            bone.rotation.y += bendAmount * 0.1;
+            bone.rotation.z += bendAmount * 0.05;
+        }
+        
+        // 손목/손바닥 bone 매핑
+        function applyWristBoneMapping(bone, positions, landmarkIndex) {
+            // 손목 bone은 주로 전체 손의 기준점 역할
+            // 특별한 회전 조정 없이 기본 위치 유지
+            if (!bone.userData.originalRotation) {
+                bone.userData.originalRotation = bone.rotation.clone();
+            }
+            bone.rotation.copy(bone.userData.originalRotation);
         }
         
         // 손가락 애니메이션 업데이트 함수
