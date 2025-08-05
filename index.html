@@ -1071,6 +1071,10 @@
                 return null;
             }
             
+            // 손목 회전 방향을 반대로 하기 위해 quaternion 반전
+            // 실제 손목이 시계방향으로 돌면 모델은 반시계방향으로 돌도록
+            quaternion.invert();
+            
             return quaternion;
         }
         
