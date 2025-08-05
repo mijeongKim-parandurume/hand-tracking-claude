@@ -189,7 +189,8 @@
             <div class="debug-info">
                 손목 위치: <span id="wristPos">-</span><br>
                 모델 상태: <span id="modelStatus">모델 로딩 중...</span><br>
-                Bone 매핑: <span id="boneMapping">-</span>
+                Bone 매핑: <span id="boneMapping">-</span><br>
+                회전 안정성: <span id="rotationStability">-</span>
             </div>
             <div class="toggle-switch">
                 <label>랜드마크 표시:</label>
@@ -820,8 +821,9 @@
         hands.setOptions({
             maxNumHands: 2,
             modelComplexity: 1,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
+            minDetectionConfidence: 0.7,  // 더 높은 신뢰도
+            minTrackingConfidence: 0.7,   // 더 높은 추적 신뢰도
+            staticImageMode: false        // 동영상 모드 (더 부드러운 추적)
         });
         
         hands.onResults(onHandsResults);
@@ -932,7 +934,7 @@
                 const model = handedness === 'Left' ? rightHandModel : leftHandModel;
                 if (model) {
                     model.visible = true;
-                    updateGLBModel(model, positions, landmarks, handedness);
+                    updateGLBModel(model, positions, landmarks, handedness, handIndex === 0);
                 }
             }
         }
@@ -960,15 +962,131 @@
             });
         }
         
-        // GLB 모델 업데이트 (양손 모두 올바른 회전 적용)
-        function updateGLBModel(modelContainer, positions, landmarks, handedness) {
+        // 부드러운 회전 보간을 위한 이전 quaternion 저장
+        let previousLeftQuaternion = new THREE.Quaternion();
+        let previousRightQuaternion = new THREE.Quaternion();
+        
+        // 랜드마크 데이터 스무딩을 위한 히스토리
+        const landmarkHistory = {
+            left: [],
+            right: []
+        };
+        
+        // 랜드마크 스무딩 함수
+        function smoothLandmarks(positions, handType) {
+            const history = landmarkHistory[handType];
+            const maxHistorySize = 3; // 최근 3프레임 평균
+            
+            // 현재 프레임 추가
+            history.push([...positions]);
+            
+            // 히스토리 크기 제한
+            if (history.length > maxHistorySize) {
+                history.shift();
+            }
+            
+            // 평균 계산
+            if (history.length === 1) {
+                return positions; // 첫 프레임은 그대로 반환
+            }
+            
+            const smoothedPositions = [];
+            for (let i = 0; i < positions.length; i++) {
+                let avgX = 0, avgY = 0, avgZ = 0;
+                
+                for (let j = 0; j < history.length; j++) {
+                    avgX += history[j][i].x;
+                    avgY += history[j][i].y;
+                    avgZ += history[j][i].z;
+                }
+                
+                smoothedPositions.push(new THREE.Vector3(
+                    avgX / history.length,
+                    avgY / history.length,
+                    avgZ / history.length
+                ));
+            }
+            
+            return smoothedPositions;
+        }
+        
+        // 안정적인 회전 계산 함수
+        function calculateStableRotation(positions, handedness) {
+            const wrist = positions[0];
+            const indexMCP = positions[5];
+            const middleMCP = positions[9];
+            const pinkyMCP = positions[17];
+            const ringMCP = positions[13];
+            
+            // 더 안정적인 벡터 계산을 위해 여러 포인트 사용
+            const fingerDirection = new THREE.Vector3()
+                .addVectors(
+                    new THREE.Vector3().subVectors(indexMCP, wrist),
+                    new THREE.Vector3().subVectors(middleMCP, wrist)
+                )
+                .normalize();
+            
+            const sideVector = new THREE.Vector3()
+                .addVectors(
+                    new THREE.Vector3().subVectors(pinkyMCP, wrist),
+                    new THREE.Vector3().subVectors(ringMCP, wrist)
+                )
+                .normalize();
+            
+            // 외적으로 법선 벡터 계산
+            let palmNormal = new THREE.Vector3().crossVectors(sideVector, fingerDirection).normalize();
+            
+            // 벡터 검증 (너무 작으면 이전 값 유지)
+            if (fingerDirection.length() < 0.1 || sideVector.length() < 0.1) {
+                return null; // 불안정한 데이터
+            }
+            
+            // 직교 좌표계 구성
+            const forward = palmNormal.clone().negate(); // 손등 방향
+            const right = new THREE.Vector3().crossVectors(forward, fingerDirection).normalize();
+            const up = fingerDirection.clone();
+            
+            // 모델 매핑에 따른 조정
+            const isLeftHand = (handedness === 'Left');
+            if (isLeftHand) {
+                right.negate();
+            } else {
+                right.negate();
+            }
+            
+            // 회전 행렬 생성
+            const rotationMatrix = new THREE.Matrix4();
+            rotationMatrix.set(
+                right.x, up.x, forward.x, 0,
+                right.y, up.y, forward.y, 0,
+                right.z, up.z, forward.z, 0,
+                0, 0, 0, 1
+            );
+            
+            // Quaternion으로 변환
+            const quaternion = new THREE.Quaternion().setFromRotationMatrix(rotationMatrix);
+            
+            // NaN 체크
+            if (isNaN(quaternion.x) || isNaN(quaternion.y) || isNaN(quaternion.z) || isNaN(quaternion.w)) {
+                return null;
+            }
+            
+            return quaternion;
+        }
+        
+        // GLB 모델 업데이트 (개선된 안정적인 회전 적용)
+        function updateGLBModel(modelContainer, positions, landmarks, handedness, isFirstHand = false) {
             if (!modelContainer || !modelContainer.children[0]) return;
             
             const model = modelContainer.children[0];
             const isLeftHand = (handedness === 'Left');
             
-            // 손목 위치로 모델 이동
-            modelContainer.position.copy(positions[0]);
+            // 랜드마크 스무딩 적용
+            const handType = isLeftHand ? 'left' : 'right';
+            const smoothedPositions = smoothLandmarks(positions, handType);
+            
+            // 손목 위치로 모델 이동 (스무딩된 위치 사용)
+            modelContainer.position.copy(smoothedPositions[0]);
             
             // 손에 따른 회전값과 스케일 선택 (올바른 매핑)
             const rotationX = isLeftHand ? rightHandRotationX : leftHandRotationX;
@@ -977,50 +1095,48 @@
             const scaleFactor = isLeftHand ? rightHandScaleFactor : leftHandScaleFactor;
             
             // 손 크기에 따른 스케일 조정
-            const handScale = positions[0].distanceTo(positions[9]) * scaleFactor;
+            const handScale = smoothedPositions[0].distanceTo(smoothedPositions[9]) * scaleFactor;
             model.scale.set(handScale, handScale, handScale);
             
-            // 손바닥 방향 계산 (랜드마크 좌표를 직접 사용)
-            const wrist = positions[0];
-            const indexMCP = positions[5];
-            const middleMCP = positions[9];
-            const pinkyMCP = positions[17];
+            // 안정적인 회전 계산
+            const calculatedQuaternion = calculateStableRotation(smoothedPositions, handedness);
             
-            // 랜드마크 기반 좌표계 구성 (손등이 보이도록 수정)
-            const v1 = new THREE.Vector3().subVectors(indexMCP, wrist);
-            const v2 = new THREE.Vector3().subVectors(pinkyMCP, wrist);
-            let palmNormal = new THREE.Vector3().crossVectors(v2, v1).normalize(); // 벡터 순서 반전하여 법선 방향 뒤집기
-            
-            const fingerDirection = new THREE.Vector3().subVectors(middleMCP, wrist).normalize();
-            let sideDirection = new THREE.Vector3().crossVectors(fingerDirection, palmNormal).normalize();
-            let forwardDirection = new THREE.Vector3().crossVectors(sideDirection, fingerDirection).normalize();
-            
-            // 손등이 보이도록 추가 보정
-            palmNormal.negate(); // 손바닥 법선을 반전시켜 손등 방향으로
-            forwardDirection = palmNormal; // 앞방향을 손등 방향으로 설정
-            
-            // 모델 매핑에 따른 좌표계 보정
-            // 왼손 랜드마크 → 오른손 모델, 오른손 랜드마크 → 왼손 모델이므로
-            // 좌표계를 해당 모델에 맞게 조정
-            if (isLeftHand) {
-                // 왼손 랜드마크를 오른손 모델에 적용: 추가 Y축 조정
-                sideDirection.negate();
+            if (calculatedQuaternion) {
+                // 이전 quaternion과의 보간
+                const previousQuaternion = isLeftHand ? previousLeftQuaternion : previousRightQuaternion;
+                
+                // 처음이거나 이전 값이 없으면 바로 적용
+                if (previousQuaternion.length() === 0) {
+                    modelContainer.quaternion.copy(calculatedQuaternion);
+                } else {
+                    // 부드러운 보간 적용 (slerp)
+                    const smoothingFactor = 0.7; // 0에 가까울수록 더 부드러움
+                    modelContainer.quaternion.slerpQuaternions(
+                        previousQuaternion, 
+                        calculatedQuaternion, 
+                        smoothingFactor
+                    );
+                }
+                
+                // 현재 quaternion 저장
+                if (isLeftHand) {
+                    previousLeftQuaternion.copy(modelContainer.quaternion);
+                } else {
+                    previousRightQuaternion.copy(modelContainer.quaternion);
+                }
+                
+                // 회전 안정성 상태 업데이트 (첫 번째 손만)
+                if (isFirstHand) {
+                    document.getElementById('rotationStability').textContent = '안정적';
+                    document.getElementById('rotationStability').style.color = '#00ff00';
+                }
             } else {
-                // 오른손 랜드마크를 왼손 모델에 적용: 추가 Y축 조정
-                sideDirection.negate();
+                // 불안정한 데이터인 경우
+                if (isFirstHand) {
+                    document.getElementById('rotationStability').textContent = '불안정 (이전값 유지)';
+                    document.getElementById('rotationStability').style.color = '#ff6666';
+                }
             }
-            
-            // 회전 행렬 생성
-            const rotationMatrix = new THREE.Matrix4();
-            rotationMatrix.set(
-                sideDirection.x, fingerDirection.x, forwardDirection.x, 0,
-                sideDirection.y, fingerDirection.y, forwardDirection.y, 0,
-                sideDirection.z, fingerDirection.z, forwardDirection.z, 0,
-                0, 0, 0, 1
-            );
-            
-            const inverseMatrix = new THREE.Matrix4().copy(rotationMatrix).invert();
-            modelContainer.quaternion.setFromRotationMatrix(inverseMatrix);
             
             // 사용자 정의 추가 회전 적용
             const additionalRotation = new THREE.Euler(
@@ -1032,8 +1148,8 @@
             const additionalQuaternion = new THREE.Quaternion().setFromEuler(additionalRotation);
             modelContainer.quaternion.multiply(additionalQuaternion);
             
-            // 완전한 bone-to-landmark 매핑 적용
-            applyBoneToLandmarkMapping(model, positions, handedness);
+            // 완전한 bone-to-landmark 매핑 적용 (스무딩된 위치 사용)
+            applyBoneToLandmarkMapping(model, smoothedPositions, handedness);
         }
         
         // 완전한 bone-to-landmark 매핑 함수
