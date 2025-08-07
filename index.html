@@ -929,8 +929,9 @@
             
             // GLB 모델 업데이트
             if (modelsLoaded) {
-                // 올바른 모델 매핑: 왼손은 왼손 모델, 오른손은 오른손 모델
-                // 하지만 좌표계 차이로 인해 실제로는 반대 매핑 필요
+                // 좌표 변환으로 인한 실제 모델 매핑:
+                // 왼손 랜드마크는 오른쪽에 나타나므로 rightHandModel 사용
+                // 오른손 랜드마크는 왼쪽에 나타나므로 leftHandModel 사용
                 const model = handedness === 'Left' ? rightHandModel : leftHandModel;
                 if (model) {
                     model.visible = true;
@@ -1011,7 +1012,7 @@
         }
         
         // 안정적인 회전 계산 함수
-        function calculateStableRotation(positions, handedness) {
+        function calculateStableRotation(positions, handedness, isFirstHand = false) {
             const wrist = positions[0];
             const indexMCP = positions[5];
             const middleMCP = positions[9];
@@ -1071,9 +1072,28 @@
                 return null;
             }
             
-            // 손목 회전 방향을 반대로 하기 위해 quaternion 반전
-            // 실제 손목이 시계방향으로 돌면 모델은 반시계방향으로 돌도록
-            quaternion.invert();
+            // 손의 방향과 종류에 따른 정교한 회전 조정
+            // 손목에서 중지 MCP로의 벡터로 손의 방향 판단 (더 안정적)
+            const handDirection = new THREE.Vector3().subVectors(middleMCP, wrist).normalize();
+            const verticalDot = Math.abs(handDirection.dot(new THREE.Vector3(0, 1, 0))); // Y축과의 내적
+            const isVertical = verticalDot > 0.6; // 수직 상태 판단 (손가락이 위아래를 향할 때)
+            
+            // 손을 세워서 회전할 때만 Y축 회전방향을 반대로 조정
+            if (isVertical) {
+                // Quaternion을 Euler 각도로 변환하여 Y축만 반대로
+                const euler = new THREE.Euler().setFromQuaternion(quaternion);
+                
+                // Y축 회전만 반대로 (손목을 세워서 회전하는 방향) - 양손 모두 적용
+                euler.y = -euler.y;
+                
+                // 수정된 Euler 각도를 다시 Quaternion으로 변환
+                quaternion.setFromEuler(euler);
+            }
+            
+            // 디버깅 정보 출력
+            if (isFirstHand) {
+                console.log(`Hand: ${handedness}, Vertical: ${isVertical}, VerticalDot: ${verticalDot.toFixed(3)}, Y-axis rotation inverted: ${isVertical}`);
+            }
             
             return quaternion;
         }
@@ -1092,7 +1112,9 @@
             // 손목 위치로 모델 이동 (스무딩된 위치 사용)
             modelContainer.position.copy(smoothedPositions[0]);
             
-            // 손에 따른 회전값과 스케일 선택 (올바른 매핑)
+            // 손에 따른 회전값과 스케일 선택 (실제 사용 모델 기준)
+            // 왼손 랜드마크는 rightHandModel을 사용하므로 right 설정값 적용
+            // 오른손 랜드마크는 leftHandModel을 사용하므로 left 설정값 적용
             const rotationX = isLeftHand ? rightHandRotationX : leftHandRotationX;
             const rotationY = isLeftHand ? rightHandRotationY : leftHandRotationY;
             const rotationZ = isLeftHand ? rightHandRotationZ : leftHandRotationZ;
@@ -1103,11 +1125,13 @@
             model.scale.set(handScale, handScale, handScale);
             
             // 안정적인 회전 계산
-            const calculatedQuaternion = calculateStableRotation(smoothedPositions, handedness);
+            const calculatedQuaternion = calculateStableRotation(smoothedPositions, handedness, isFirstHand);
             
             if (calculatedQuaternion) {
-                // 이전 quaternion과의 보간
-                const previousQuaternion = isLeftHand ? previousLeftQuaternion : previousRightQuaternion;
+                // 이전 quaternion과의 보간 (실제 사용 모델 기준)
+                // 왼손 랜드마크는 rightHandModel을 사용하므로 rightQuaternion 히스토리 사용
+                // 오른손 랜드마크는 leftHandModel을 사용하므로 leftQuaternion 히스토리 사용
+                const previousQuaternion = isLeftHand ? previousRightQuaternion : previousLeftQuaternion;
                 
                 // 처음이거나 이전 값이 없으면 바로 적용
                 if (previousQuaternion.length() === 0) {
@@ -1122,11 +1146,11 @@
                     );
                 }
                 
-                // 현재 quaternion 저장
+                // 현재 quaternion 저장 (실제 사용 모델 기준)
                 if (isLeftHand) {
-                    previousLeftQuaternion.copy(modelContainer.quaternion);
-                } else {
                     previousRightQuaternion.copy(modelContainer.quaternion);
+                } else {
+                    previousLeftQuaternion.copy(modelContainer.quaternion);
                 }
                 
                 // 회전 안정성 상태 업데이트 (첫 번째 손만)
@@ -1415,7 +1439,7 @@
                 const maxBendAngle = Math.PI / 3; // 60도
                 const bendRotation = bendAmount * maxBendAngle;
                 
-                // 손별 사용자 설정 회전값 사용 (올바른 매핑)
+                // 손별 사용자 설정 회전값 사용 (실제 사용 모델 기준)
                 const isLeftHand = (handedness === 'Left');
                 const baseXRotation = isLeftHand ? (rightThumbRotationX * Math.PI / 180) : (leftThumbRotationX * Math.PI / 180);
                 const baseYRotation = isLeftHand ? (rightThumbRotationY * Math.PI / 180) : (leftThumbRotationY * Math.PI / 180);
